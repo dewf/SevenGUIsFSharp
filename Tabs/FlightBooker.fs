@@ -31,7 +31,6 @@ type Msg =
     | DepartChanged of value: DatePicker.Value
     | ReturnChanged of value: DatePicker.Value
     | BookFlight
-    | MessageBoxResult of value: StandardButton
 
 let init() =
     { Mode = OneWay
