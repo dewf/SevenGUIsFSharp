@@ -156,5 +156,5 @@ let view (state: State) =
 let main argv =
     use app =
         createApplication init update view
-    // app.SetStyle(Fusion)
+    app.SetStyle(Fusion)
     app.Run argv
