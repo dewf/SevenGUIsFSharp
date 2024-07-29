@@ -3,7 +3,6 @@
 open FSharpQt
 open BuilderNode
 open FSharpQt.MiscTypes
-open FSharpQt.Models.TrackedRows
 open Reactor
 
 open FSharpQt.Widgets
@@ -12,11 +11,12 @@ open BoxLayout
 open GridLayout
 open PushButton
 open LineEdit
-
-open Models.ListModelNode
-open Models.SortFilterProxyModel
 open TreeView
-open FSharpQt.ModelBindings
+
+open FSharpQt.Models
+open ListModelNode
+open SortFilterProxyModel
+open TrackedRows
 
 type Signal = unit
 
@@ -35,7 +35,8 @@ type State = {
 
 type Msg =
     | SetFilter of filter: string
-    | SelectItem of modelIndex: ModelIndexProxy
+    | SelectRawIndex of modelIndex: ModelIndexProxy
+    | SelectActualIndex of index: int
     | SetFirst of string
     | SetLast of string
     | Create
@@ -56,12 +57,6 @@ let init () =
     }
     state, Cmd.None
     
-// because we need to invoke .MapToSource to convert the selected proxy indices, to something we can use
-// this lets us invoke methods on the Qt objects, which are normally invisible to us
-// but first it needs to be assigned in the view() function, via ModelBinding properties
-let proxyModel =
-    AbstractProxyModelBinding()
-    
 let update (state: State) (msg: Msg) =
     match msg with
     | SetFilter filter ->
@@ -71,22 +66,30 @@ let update (state: State) (msg: Msg) =
                 FirstEdit = ""
                 LastEdit = "" }
         nextState, Cmd.None
-    | SelectItem index ->
-        // note 'converted' would be safely GC'ed even if we didn't know it was disposable
-        use converted =
-            proxyModel.MapToSource(index)
-        let selectedIndex, nextFirstEdit, nextLastEdit =
-            if converted.IsValid then
-                state.Names.Rows
-                |> List.item converted.Row
-                |> (fun name -> Some converted.Row, name.First, name.Last)
-            else
-                None, "", ""
+    | SelectRawIndex index ->
+        // this is the raw proxied index - need to convert to the actual source index
+        let cmd =
+            Cmd.ViewExec (fun bindings ->
+                viewexec bindings {
+                    let! proxyModel = SortFilterProxyModel.bindNode "proxymodel"
+                    // note 'converted' would be safely GC'ed even if we didn't know it was disposable
+                    use converted =
+                        proxyModel.MapToSource(index)
+                    if converted.IsValid then
+                        // emit a new message to actually update state
+                        return SelectActualIndex converted.Row
+                })
+        state, cmd
+    | SelectActualIndex index ->
+        let nextSelectedIndex, nextFirstEdit, nextLastEdit =
+            state.Names.Rows
+            |> List.item index
+            |> (fun name -> Some index, name.First, name.Last)
         let nextState =
             { state with
                 FirstEdit = nextFirstEdit
                 LastEdit = nextLastEdit
-                SelectedIndex = selectedIndex }
+                SelectedIndex = nextSelectedIndex }
         nextState, Cmd.None
     | SetFirst text ->
         { state with FirstEdit = text }, Cmd.None
@@ -142,7 +145,10 @@ let update (state: State) (msg: Msg) =
 let view (state: State) =
     let filterLabel = Label(Text = "Filter:")
     let filterEdit =
-        LineEdit(Text = state.FilterPattern, OnTextChanged = SetFilter)
+        LineEdit(
+            Text = state.FilterPattern,
+            ClearButtonEnabled = true,
+            OnTextChanged = SetFilter)
 
     let model =
         let dataFunc row col role =
@@ -160,13 +166,13 @@ let view (state: State) =
             | "" -> Regex()
             | value -> Regex(value, [ RegexOption.CaseInsensitive ])
         SortFilterProxyModel(
+            Name = "proxymodel",            // for method invocation in 'update'
             FilterRegularExpression = regex,
             FilterKeyColumn = None,
-            SourceModel = model,
-            ModelBinding = proxyModel)
+            SourceModel = model)
         
     let treeView =
-        TreeView(SortingEnabled = true, TreeModel = filterModel, OnClicked = SelectItem)
+        TreeView(SortingEnabled = true, TreeModel = filterModel, OnClicked = SelectRawIndex)
 
     let firstLabel = Label(Text = "First:")
     let firstEdit = LineEdit(Text = state.FirstEdit, OnTextChanged = SetFirst)
