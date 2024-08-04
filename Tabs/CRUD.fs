@@ -15,6 +15,7 @@ open TreeView
 
 open FSharpQt.Models
 open ListModelNode
+open SimpleListModel
 open SortFilterProxyModel
 open TrackedRows
 
@@ -45,11 +46,11 @@ type Msg =
 
 let init () =
     let state = {
-        Names = TrackedRows.Init([
+        Names = TrackedRows.Init [
             { First = "Hans"; Last = "Emil" }
             { First = "Max"; Last = "MusterMann" }
             { First = "Roman"; Last = "Tisch" }             
-        ])
+        ]
         FilterPattern = ""
         SelectedIndex = None
         FirstEdit = ""
@@ -68,18 +69,7 @@ let update (state: State) (msg: Msg) =
         nextState, Cmd.None
     | SelectRawIndex index ->
         // this is the raw proxied index - need to convert to the actual source index
-        let cmd =
-            Cmd.ViewExec (fun bindings ->
-                viewexec bindings {
-                    let! proxyModel = SortFilterProxyModel.bindNode "proxymodel"
-                    // note 'converted' would be safely GC'ed even if we didn't know it was disposable
-                    use converted =
-                        proxyModel.MapToSource(index)
-                    if converted.IsValid then
-                        // emit a new message to actually update state
-                        return SelectActualIndex converted.Row
-                })
-        state, cmd
+        state, cmdMapToSource "proxymodel" index (fun converted -> SelectActualIndex converted.Row)
     | SelectActualIndex index ->
         let nextSelectedIndex, nextFirstEdit, nextLastEdit =
             state.Names.Rows
@@ -142,6 +132,14 @@ let update (state: State) (msg: Msg) =
                 state
         nextState, Cmd.None
         
+type RowDelegate(state: State) =
+    inherit AbstractSimpleListModelDelegate<Msg,Name>()
+    override this.Data row col role =
+        match col, role with
+        | 0, DisplayRole -> Variant.String row.Last
+        | 1, DisplayRole -> Variant.String row.First
+        | _ -> Variant.Empty
+        
 let view (state: State) =
     let filterLabel = Label(Text = "Filter:")
     let filterEdit =
@@ -151,12 +149,7 @@ let view (state: State) =
             OnTextChanged = SetFilter)
 
     let model =
-        let dataFunc row col role =
-            match col, role with
-            | 0, DisplayRole -> Variant.String row.Last
-            | 1, DisplayRole -> Variant.String row.First
-            | _ -> Variant.Empty
-        ListModelNode(dataFunc, 2,
+        ListModelNode(RowDelegate(state), 2,
                       Rows = state.Names,
                       Headers = [ "Last"; "First" ])
         
